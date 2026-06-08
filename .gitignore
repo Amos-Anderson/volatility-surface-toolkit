@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Environments
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Editors and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.nav
+*.out
+*.run.xml
+*.snm
+*.synctex.gz
+*.toc
+
+# Local scratch outputs
+scratch/
+tmp/
+temp/

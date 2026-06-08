@@ -1,0 +1,528 @@
+\documentclass[12pt, a4paper]{article}
+
+% --- Packages ---
+\usepackage[margin=2.5cm, headheight=15pt]{geometry}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+\usepackage{natbib}
+\usepackage{setspace}
+\usepackage{caption}
+\usepackage{float}
+
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{arrows.meta, positioning, shapes.geometric,
+                decorations.pathreplacing, calc, backgrounds}
+
+\parindent 0px
+
+% --- Colors ---
+\definecolor{darkblue}{RGB}{44, 62, 80}
+\definecolor{accentblue}{RGB}{52, 120, 180}
+\definecolor{gen1color}{RGB}{69, 123, 157}
+\definecolor{gen2color}{RGB}{230, 57, 70}
+\definecolor{gen3color}{RGB}{45, 198, 83}
+\definecolor{lightgray}{RGB}{245, 246, 247}
+\definecolor{medgray}{RGB}{200, 200, 200}
+
+% --- Hyperref ---
+\hypersetup{
+  colorlinks = true,
+  linkcolor  = darkblue,
+  citecolor  = darkblue,
+  urlcolor   = darkblue,
+}
+
+% % --- Header / footer ---
+% \pagestyle{fancy}
+% \fancyhf{}
+% \rhead{\small Volatility Surface Modelling: From L\'{e}vy Processes to Deep Learning}
+% \lhead{\small Amos Anderson}
+% \rfoot{\small\thepage}
+% \renewcommand{\headrulewidth}{0.4pt}
+
+% --- Section formatting ---
+\titleformat{\section}{\large\bfseries\color{darkblue}}{\thesection}{1em}{}
+\titleformat{\subsection}{\normalsize\bfseries\color{darkblue}}{\thesubsection}{1em}{}
+\titleformat{\subsubsection}{\normalsize\itshape\color{darkblue}}{\thesubsubsection}{1em}{}
+
+% --- Theorem environments ---
+\newtheorem{remark}{Remark}
+\newtheorem{definition}{Definition}
+
+% --- Caption setup ---
+\captionsetup{font=small, labelfont=bf, margin=10pt}
+
+% ================================================================
+\begin{document}
+% ================================================================
+
+% --- Title block ---
+\begin{titlepage}
+\vspace*{1cm}
+\begin{center}
+  {\LARGE\bfseries\color{darkblue}
+    Volatility Surface Modelling and Forecasting:\\[0.3cm]
+    From L\'{e}vy Processes to Deep Learning}\\[1cm]
+  {\large Amos Anderson}\\[0.3cm]
+  {\normalsize
+    AMS 603 -- Risk Measures for Finance and Data Science\\
+    Department of Applied Mathematics and Statistics \\
+    Stony Brook University \\ [0.3cm]
+    \today
+  }\\[0.5em]
+  %\rule{\textwidth}{0.8pt}
+\end{center}
+
+\vspace{2cm}
+
+\begin{abstract}
+\noindent
+Will go here
+\end{abstract}
+\end{titlepage}
+
+\newpage
+\tableofcontents
+\newpage
+
+
+% ================================================================
+%\begin{document}
+% ================================================================
+
+% --- This section is designed to be pasted into the main report ---
+
+\section{Data and the Black-Scholes Benchmark}
+\label{sec:data-bs-benchmark}
+
+\subsection{The GLD Option Chain}
+\label{subsec:gld-data}
+
+The empirical object of this study is the implied volatility surface of the \textbf{SPDR Gold Shares ETF} (ticker: GLD), a liquid exchange-traded fund that tracks the spot price of gold. On the trading day \textbf{18 July 2025}, we obtained end-of-day option quotes from \texttt{Barchart.com} covering \textbf{11 distinct maturities} ranging from 8 days to 127 days to expiry (DTE). The raw data contains bid--ask quotes for approximately 80 strikes per maturity, split between calls and puts, yielding a total of \textbf{877 usable option contracts} after filtering for positive bid--ask spreads and non-zero volume.
+
+The underlying spot price on the observation date was
+\begin{equation}
+S_0 \;=\; \$308.39,
+\end{equation}
+which situates the traded strike range ($K = 292$ to $K = 320$) in a moneyness band of roughly $K/S_0 \in [0.924,\, 1.064]$. This is notably narrower than the typical equity-index surface (where $K/S$ often spans $[0.50, 1.50]$), reflecting the fact that gold options trade most actively near the money. For each contract we compute the mid-price
+\begin{equation}
+C_{\text{mid}} \;=\; \frac{C_{\text{bid}} + C_{\text{ask}}}{2},
+\end{equation}
+which we treat as the observed market price for subsequent calibration and model comparison.
+
+Risk-free rates are not assumed flat. Instead, we download the U.S.\ Treasury yield curve for the observation date and linearly interpolate to each option's exact maturity. The resulting instantaneous rates range from \textbf{4.27\%} at the short end to \textbf{4.46\%} at the long end. We set the dividend (carry) yield to $q = 0.4\%$, which corresponds to GLD's annual expense ratio; this is standard practice for ETF options because the fund's management fee creates a continuous drag on the NAV equivalent to a negative dividend.
+
+\subsection{The Black-Scholes Benchmark}
+\label{subsec:bs-benchmark}
+
+Before introducing stochastic volatility, L\'evy processes, or neural networks, we establish a \textbf{deliberately naive baseline}: the Black-Scholes (BS) model with a single, constant implied volatility $\sigma$ applied uniformly to every strike and maturity. The purpose is not to advocate BS---every practitioner knows it is wrong---but to \textbf{quantify exactly how wrong it is}, and to identify the specific directions (strike, maturity, skew, term structure) in which the misspecification is most severe.
+
+Under BS, the price of a European call is
+\begin{equation}
+C_{\text{BS}}(S_0, K, T, r, \sigma, q)
+\;=\; S_0 e^{-qT}\Phi(d_1) \;-\; K e^{-rT}\Phi(d_2),
+\end{equation}
+with the standard definitions
+\begin{equation}
+d_{1,2} \;=\; \frac{\ln(S_0/K) + (r - q \pm \tfrac{1}{2}\sigma^2)T}{\sigma\sqrt{T}},
+\end{equation}
+and $\Phi(\cdot)$ the standard normal CDF. The put formula follows by put--call parity. To find the single best flat volatility, we solve
+\begin{equation}
+\hat\sigma_{\text{flat}}
+\;=\; \arg\min_{\sigma > 0}
+\;\frac{1}{N}\sum_{i=1}^{N}
+\Bigl(\, C_{\text{BS}}^{(i)}(\sigma) \;-\; C_{\text{mid}}^{(i)} \,\Bigr)^2,
+\label{eq:flat-vol-mse}
+\end{equation}
+where the sum runs over all 877 contracts. Numerical minimisation of \eqref{eq:flat-vol-mse} yields
+\begin{equation}
+\boxed{\;\hat\sigma_{\text{flat}} \;=\; 16.20\%\;}
+\end{equation}
+with an overall mean absolute percentage error (MAPE) of \textbf{8.32\%}.
+
+\subsection{Where Flat Volatility Fails: A Quantitative Diagnosis}
+\label{subsec:bs-failure}
+
+The flat-vol assumption fails in four economically interpretable ways. Table~\ref{tab:stylized-facts} summarises the evidence; each stylised fact points to a specific mechanism that the three generations of models in this report must address.
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Stylised Fact} & \textbf{Direction} & \textbf{Magnitude} & \textbf{BS Failure} \\
+\midrule
+1.\ Skew (OTM put premium) & Put $K/S=0.944$ vs ATM & $+0.51$ pp & No crash-risk mechanism \\
+2.\ Term structure & Short ATM vs Long ATM & $-2.47$ pp & $\sigma$ constant in $T$ \\
+3.\ Short-dated steepness & Skew ratio short/long & $5.1\times$ & No time-varying skew \\
+4.\ Smile asymmetry & Call $K/S=1.057$ vs ATM & $+1.30$ pp & Gaussian symmetry \\
+\bottomrule
+\end{tabular}
+\caption{GLD stylised facts on 18 July 2025. ``pp'' = percentage points. The flat volatility that best fits all 877 contracts is $\hat\sigma_{\text{flat}} = 16.20\%$.}
+\label{tab:stylized-facts}
+\end{table}
+
+\subsubsection*{1. The Skew: OTM Puts Trade Richer Than ATM}
+
+At one-month maturity, the at-the-money implied vol is $15.29\%$. A put with strike $K/S_0 = 0.944$---only $5.6\%$ out of the money---commands $15.80\%$. That $+51$ basis-point premium is the market's price for \textbf{downside tail risk}. Black-Scholes has no mechanism to produce this asymmetry: under the log-normal model, the probability of a $5.6\%$ downward move equals the probability of a $5.6\%$ upward move, so OTM puts and OTM calls should carry identical implied vols. The data refutes this symmetry every day.
+
+\subsubsection*{2. The Term Structure: Volatility is Not Constant in Time}
+
+GLD exhibits an \textbf{upward-sloping term structure}: ATM implied vol is $13.65\%$ at the short end ($T \leq 15$ DTE) and rises to $16.12\%$ at the long end ($T \geq 90$ DTE). A single $\sigma$ cannot simultaneously price a 1-week and a 4-month option correctly. The $-2.47$ pp differential is economically significant: on a $\$300$ underlying, a 2 pp vol difference translates to roughly $\$1.50$ in option value for ATM strikes.
+
+This upward slope is characteristic of gold and differs from equity indices such as SPX, where the term structure is typically downward-sloping in calm markets. The difference reflects gold's safe-haven role: uncertainty about future gold prices \emph{increases} with horizon, whereas equity uncertainty is often concentrated in the short term.
+
+\subsubsection*{3. Short-Dated Steepness: The Skew is Sharpest Near Expiry}
+
+The most severe failure of flat volatility occurs at the short end. The skew (difference between OTM put IV and ATM IV) is $+2.69$ pp for options with $T \leq 15$ DTE, but only $-0.52$ pp for $T \geq 90$ DTE. In other words, the short-dated skew is \textbf{5.1 times steeper} than the long-dated skew. This is impossible under Black-Scholes because the model's skew flattens as $1/\sqrt{T}$, whereas the market's skew is \emph{convex} in time.
+
+This stylised fact is particularly challenging for Generation~1 (stochastic volatility). The Heston model generates skew via correlation $\rho < 0$ between spot and variance, but the resulting skew decays too rapidly at short maturities unless jumps are added---which motivates Generation~2.
+
+\subsubsection*{4. Smile Asymmetry: Calls Can Also Trade Rich}
+
+Interestingly for GLD, deep OTM calls also trade above the flat-vol line: at $K/S_0 = 1.057$, implied vol is $16.59\%$, a full $+1.30$ pp above ATM. This is not the typical equity-index pattern (where OTM calls usually trade below or near ATM), and it reflects gold's two-sided tail risk---both supply shocks and demand spikes can move the metal sharply. A symmetric Gaussian model cannot capture this bidirectional tail behaviour.
+
+\subsection{Implication for Model Comparison}
+\label{subsec:implication}
+
+The 877 GLD quotes constitute the \textbf{common benchmark} against which every subsequent model is evaluated. We report three metrics:
+
+\begin{itemize}[leftmargin=*]
+\item \textbf{Smile fit:} Kolmogorov--Smirnov distance between model-implied and market IV distributions, plus RMSE by moneyness bucket.
+\item \textbf{Forecasting accuracy:} Out-of-sample MAPE for next-day surface prediction.
+\item \textbf{Calibration speed:} Wall-clock time to fit model parameters (critical for a live trading desk).
+\end{itemize}
+
+The flat-vol benchmark sets the floor: any model that cannot beat $\text{MAPE} = 8.32\%$ or $\text{RMSE} = 16.20\%$ is not economically viable. The next section asks whether adding a stochastic variance process---Generation~1, the Heston model---is sufficient to clear this hurdle.
+
+\section{Generation 1: Stochastic Volatility}
+\label{sec:gen1-heston}
+
+\subsection{The Heston Model}
+\label{subsec:heston-theory}
+
+The Heston (1993) model resolves the flat-vol failure by making volatility itself a random process. Under the risk-neutral measure $\Qmeas$, the spot $S_t$ and its instantaneous variance $v_t$ follow:
+\begin{align}
+\mathrm{d}S_t &= (r-q)\,S_t\,\mathrm{d}t + \sqrt{v_t}\,S_t\,\mathrm{d}W_t^1, \label{eq:heston-s}\\
+\mathrm{d}v_t &= \kappa(\theta - v_t)\,\mathrm{d}t + \sigma_v\sqrt{v_t}\,\mathrm{d}W_t^2, \label{eq:heston-v}
+\end{align}
+with $\mathrm{d}\langle W^1,W^2\rangle_t = \rho\,\mathrm{d}t$. The variance process \eqref{eq:heston-v} is a Cox--Ingersoll--Ross (CIR) diffusion: mean-reverting toward $\theta$ at speed $\kappa$, with volatility of volatility $\sigma_v$.
+
+The parameter $\rho$ is the crucial economic mechanism. When $\rho < 0$, a drop in the spot is accompanied by a rise in variance, making OTM puts more expensive---exactly the skew observed in the data. The Heston characteristic function is known in closed form (Heston 1993), and option prices are recovered via Fourier inversion---we use the Carr--Madan FFT with the Albrecher et al.\ (2007) ``little-trap'' formulation for numerical stability.
+
+\subsection{Calibration to GLD}
+
+We fit the five Heston parameters $(v_0,\kappa,\theta,\sigma_v,\rho)$ to the GLD surface by minimising the weighted sum of squared pricing errors over a representative subsample of 55 quotes (ATM plus near-OTM puts and calls per maturity). The calibration completes in approximately 28 seconds via L-BFGS-B.
+
+The fitted parameters are:
+\begin{center}
+\begin{tabular}{@{}lccccc@{}}\toprule
+$v_0$ & $\kappa$ & $\theta$ & $\sigma_v$ & $\rho$ & Feller: $2\kappa\theta-\sigma_v^2$\\
+\midrule
+$0.0220$ & $10.00$ & $0.0308$ & $0.6598$ & $+0.2437$ & $0.1813>0$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The Feller condition is satisfied, ensuring the variance remains strictly positive. Notably, $\rho = +0.24$ is \textbf{positive} for GLD---unlike the typical equity-index finding of $\rho\approx-0.7$. Gold options exhibit \emph{two-sided} tail risk: both supply shocks and safe-haven demand spikes generate large moves, so the correlation is weaker and can even reverse sign. The extreme mean-reversion speed $\kappa=10$ (at the optimizer's boundary) indicates that the model needs very rapid variance convergence to fit the short-dated term structure.
+
+\subsection{Results: Where Heston Succeeds and Where It Fails}
+\label{subsec:heston-results}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{@{}lccc@{}}\toprule
+\textbf{Moneyness Bucket} & \textbf{BS Flat Vol} & \textbf{Heston SV} & \textbf{Difference}\\
+\midrule
+Deep OTM Put ($K/S\leq 0.95$) & 8.36\% & 12.19\% & $-3.83$ pp\\
+OTM Put ($0.95 < K/S < 0.98$) & 11.14\% & 6.08\% & $+5.06$ pp\\
+ATM ($0.98\leq K/S\leq 1.02$) & 8.01\% & 4.97\% & $+3.04$ pp\\
+OTM Call ($1.02 < K/S < 1.05$) & 6.12\% & 5.43\% & $+0.69$ pp\\
+Deep OTM Call ($K/S\geq 1.05$) & 7.29\% & 3.57\% & $+3.72$ pp\\
+\midrule
+\bfseries Overall MAPE & \bfseries 8.32\% & \bfseries 5.83\% & \bfseries $+2.49$ pp\\
+\bottomrule
+\end{tabular}
+\caption{Pricing MAPE by moneyness bucket: Black-Scholes flat vol versus calibrated Heston (877 GLD quotes, 18 July 2025). A positive difference means Heston outperforms BS.}
+\label{tab:heston-results}
+\end{table}
+
+\paragraph{Heston succeeds} at ATM and moderate OTM strikes, where the correlated variance mechanism captures the bulk of the smile. The 29.9\% reduction in overall MAPE (from 8.32\% to 5.83\%) confirms that stochastic volatility is a meaningful improvement over flat volatility.
+
+\paragraph{Heston fails} at \textbf{deep OTM puts} ($K/S\leq 0.95$), where MAPE rises from 8.36\% to 12.19\%. The CIR diffusion cannot generate enough short-maturity skew for deep downside strikes: the variance process needs time to react to spot drops, but short-dated options expire before mean reversion can materialise. This is the \emph{short-dated steepness} problem identified in Section~\ref{subsec:bs-failure}---and it is exactly why the literature adds \textbf{jumps} (Bates 1996) or replaces the Gaussian driver entirely with L\'evy processes (Barndorff-Nielsen 1997; Madan, Carr \& Chang 1998).
+
+\paragraph{Industry relevance.} The 28-second calibration time is acceptable for end-of-day risk reporting but prohibitive for live trading, where a derivatives desk recalibrates every 15--30 minutes. The per-quote pricing cost ($\sim$0.5 seconds effective) is also too slow for high-frequency quoting. This computational bottleneck motivates both the semi-closed L\'evy formulae of Generation~2 and the neural-network inversion of Generation~3.
+
+\paragraph{The SVJ extension.} Following Bates (1996), we extend Heston with compound Poisson jumps, freezing the five diffusion parameters and calibrating the jump triplet $(\lambda, \mu_J, \sigma_J)$. The fitted values are $\lambda = 0.0102$, $\mu_J \approx 0$, $\sigma_J = 0.010$ --- effectively \textbf{zero jumps}. The deep OTM put MAPE remains $12.19\%$, unchanged from Heston.
+
+This null result is economically informative, not a failure. The GLD strike range ($K/S \in [0.924, 1.064]$) is too narrow to generate the strong downside tail signal that jumps are designed to capture. The optimizer correctly concludes that CIR diffusion alone explains the observed prices within this band. This confirms Gatheral's (2006) theoretical argument: \emph{finite-activity} Poisson jumps struggle with short-dated steepness because the arrival rate is too low to match the market's continuous skew. What is needed is \emph{infinite-activity} --- a Lévy process where jumps occur at every time scale. That is Generation~2.
+
+\subsection{The Bridge to Generation 2}
+\label{subsec:gen1-bridge}
+
+The Heston model explains the volatility surface through \emph{diffusion}---continuous, correlated Brownian motion. What it cannot explain is the \emph{jumps}: the sudden, discontinuous moves that dominate deep OTM pricing at short maturities. The next generation replaces the Gaussian assumption with heavy-tailed L\'evy processes, where the return distribution itself has infinite activity and can match the market's extreme skew without ad hoc jump overlays.
+
+\section{Generation 2: L\'evy Processes}
+\label{sec:gen2-levy}
+
+\subsection{Why Heston and SVJ Are Not Enough}
+\label{subsec:gen2-motivation}
+
+The Heston model explained the volatility surface through \emph{diffusion}---continuous Brownian motion with correlated variance. The SVJ extension added \emph{finite-activity} compound Poisson jumps. Both failed at the short-dated extreme: Heston because CIR variance needs time to react; SVJ because the Poisson arrival rate $\lambda$ is too low to generate a continuous stream of small jumps at every time scale.
+
+Gatheral (2006) makes the point precisely: \emph{``The smile of a diffusion model is very different from that of a jump model. In particular, the short-dated smile in a diffusion model is very shallow compared to that of a jump model.''} The empirical short-dated skew scales as $T^H$ with $H < 1/2$, whereas Heston diffusion gives $T^{1/2}$ and finite Poisson jumps give a discontinuous cusp.
+
+What is needed is a process with \textbf{infinite activity}: jumps occurring at \emph{every} time scale, not just at discrete Poisson arrival times. L\'evy processes provide exactly this.
+
+\subsection{L\'evy Processes and the L\'evy-Khinchine Triplet}
+\label{subsec:levy-theory}
+
+A L\'evy process $L_t$ is a c\`adl\`ag stochastic process with stationary independent increments and $L_0 = 0$. Its law is fully characterised by the \emph{L\'evy-Khinchine triplet} $(\gamma, \sigma, \nu)$:
+
+\begin{equation}
+\varphi_{L_t}(u) \;=\; \mathbb{E}\bigl[e^{iuL_t}\bigr]
+\;=\; \exp\!\Bigl\{ t\Bigl[ i\gamma u - \frac{\sigma^2 u^2}{2}
++ \int_{\mathbb{R}} \bigl(e^{iux} - 1 - iux\mathbf{1}_{|x|<1}\bigr)\,\nu(\mathrm{d}x)\Bigr]\Bigr\}.
+\label{eq:levy-khinchine}
+\end{equation}
+
+Here $\gamma$ is the drift, $\sigma$ the Gaussian diffusion component, and $\nu$ the L\'evy measure describing the intensity of jumps of size $x$. A process has \textbf{infinite activity} if $\nu(\mathbb{R}) = \infty$---jumps occur densely in time, not sparsely like Poisson.
+
+For option pricing, we work with \emph{exponential L\'evy models}:
+\begin{equation}
+S_t \;=\; S_0 \exp\bigl(L_t\bigr),
+\end{equation}
+and price European options via the characteristic function $\varphi(u)$ through Carr-Madan FFT---exactly the same FFT engine used for Heston, only the characteristic function changes.
+
+\subsection{Market Incompleteness and the Esscher Transform}
+\label{subsec:esscher}
+
+Adding jumps to the driving process destroys market completeness: the underlying stock $S_t$ alone no longer spans all contingent claims, because jump risk cannot be hedged by continuous trading. The risk-neutral measure $\mathbb{Q}$ is therefore \textbf{not unique}.
+
+The standard resolution in the L\'evy literature is the \textbf{Esscher transform}. Given the physical measure $\mathbb{P}$ with characteristic function $\varphi_{\mathbb{P}}(u)$, we define an equivalent measure $\mathbb{Q}_\theta$ by exponential tilting:
+\begin{equation}
+\frac{\mathrm{d}\mathbb{Q}_\theta}{\mathrm{d}\mathbb{P}}
+\;=\;
+\frac{e^{\theta L_t}}{\mathbb{E}_{\mathbb{P}}[e^{\theta L_t}]},
+\end{equation}
+where $\theta$ is chosen to enforce the martingale condition:
+\begin{equation}
+\mathbb{E}_{\mathbb{Q}_\theta}\bigl[e^{L_t}\bigr] \;=\; 1.
+\label{eq:esscher-martingale}
+\end{equation}
+
+For NIG and VG, the Esscher parameter is found in closed or semi-closed form by solving \eqref{eq:esscher-martingale}. This gives a unique pricing measure within the Esscher family---not the only possible $\mathbb{Q}$, but the standard choice in the literature and industry.
+
+\subsection{The Three L\'evy Models}
+\label{subsec:three-levy}
+
+We implement and compare three exponential L\'evy specifications.
+
+\paragraph{1. Normal Inverse Gaussian (NIG).}
+Introduced by Barndorff-Nielsen (1997), the NIG law arises from subordinating Brownian motion with drift $\theta$ by an \emph{inverse Gaussian} time change $T_t$:
+\begin{equation}
+L_t \;=\; \theta T_t + \sigma W_{T_t}.
+\end{equation}
+The density is a variance-mean mixture with closed-form characteristic function involving the modified Bessel function $K_1$:
+\begin{equation}
+\varphi_{\text{NIG}}(u) \;=\;
+\exp\!\Bigl\{ i\mu u t + \delta t\bigl(\sqrt{\alpha^2 - \beta^2} - \sqrt{\alpha^2 - (\beta+iu)^2}\bigr)\Bigr\}.
+\end{equation}
+Parameters: $\alpha > 0$ (tail heaviness), $|\beta| < \alpha$ (skewness), $\delta > 0$ (scale), $\mu$ (location). NIG is particularly attractive because Aguilar (2020) gives an \emph{explicit Bessel-function pricing formula} avoiding FFT entirely.
+
+\paragraph{2. Variance Gamma (VG).}
+Madan, Carr \& Chang (1998) subordinate Brownian motion by a \emph{Gamma} time change:
+\begin{equation}
+L_t \;=\; \theta G_t + \sigma W_{G_t}, \qquad G_t \sim \Gamma(t/\nu, \nu).
+\end{equation}
+The characteristic function is elementary (no special functions):
+\begin{equation}
+\varphi_{\text{VG}}(u) \;=\;
+\Bigl(1 - i\theta\nu u + \frac{\sigma^2\nu u^2}{2}\Bigr)^{-t/\nu}.
+\end{equation}
+Parameters: $\sigma > 0$ (volatility), $\nu > 0$ (variance rate of time change), $\theta \in \mathbb{R}$ (drift). As $\nu \to 0$, VG converges to Black-Scholes.
+
+\paragraph{3. Bilateral Gamma Motion (BGM).}
+Michaelides \& Kirkby (2024) replace the single time change with two \emph{independent} Gamma processes driving the positive and negative increments separately:
+\begin{equation}
+L_t \;=\; X^+_t - X^-_t, \qquad X^\pm_t \sim \Gamma(\alpha_\pm t, \beta_\pm).
+\end{equation}
+The characteristic function is the product of two Gamma CFs:
+\begin{equation}
+\varphi_{\text{BGM}}(u) \;=\;
+\Bigl(1 - \frac{iu}{\beta_+}\Bigr)^{-\alpha_+ t}
+\Bigl(1 + \frac{iu}{\beta_-}\Bigr)^{-\alpha_- t}.
+\end{equation}
+Parameters: $\alpha_\pm > 0$ (shape), $\beta_\pm > 0$ (rate). The key advantage is \emph{independent tail parameterisation}: $\alpha_+, \beta_+$ control the right tail (upside), $\alpha_-, \beta_-$ control the left tail (downside). This decoupling is impossible in VG or NIG, where a single parameter set governs both tails symmetrically.
+
+\subsection{From Theory to Implementation}
+\label{subsec:gen2-implementation}
+
+All three models share a common pricing pipeline:
+\begin{enumerate}
+\item Calibrate parameters to the GLD implied volatility surface by minimising pricing error;
+\item Apply the Esscher transform to obtain the risk-neutral characteristic function;
+\item Price via Carr-Madan FFT using the same engine developed for Heston;
+\item Back out model-implied volatilities and compare against the BS (8.32\%) and Heston (5.83\%) benchmarks.
+\end{enumerate}
+
+The next section reports calibration results and a quantitative synthesis of where each L\'evy model succeeds relative to stochastic volatility.
+
+\subsection{Calibration methodology: IV-space objective}
+
+The conventional approach in the Lévy option-pricing literature
+(\citeA{schoutens2003levy}, \citeA{carr2002fine}) is to calibrate in
+\emph{implied-volatility space} rather than price space.  The reason is
+straightforward: a deep OTM put with market price \$0.10 and model price
+\$0.12 incurs a 20\% relative error in price space but only a $\sim$1
+vol-point error in IV space.  Because Lévy models were designed to fit the
+\emph{shape} of the volatility smile --- particularly the steep short-dated
+skew and the fat left tail --- IV calibration is the natural metric.
+
+We therefore minimise
+\begin{equation}
+  \text{IV-MAPE}(\boldsymbol\theta)
+  = \frac{1}{N}\sum_{i=1}^{N}
+    \frac{|\sigma^{\text{model}}_{\text{impl}}(K_i,T_i;\boldsymbol\theta)
+          -\sigma^{\text{market}}_{\text{impl}}(K_i,T_i)|}
+         {\sigma^{\text{market}}_{\text{impl}}(K_i,T_i)}\times 100\% ,
+\end{equation}
+where $\sigma^{\text{model}}_{\text{impl}}$ is obtained by inverting the
+Black--Scholes formula on the model price.  Market implied volatilities
+are pre-computed once from the observed mid-prices; model IVs are computed
+anew for every parameter vector during optimisation.
+
+The optimiser is differential evolution (DE) with population size
+$12\times d$ (where $d$ is the number of model parameters), followed by an
+L-BFGS-B polish step.  DE is essential because the Lévy calibration
+landscape is highly non-convex: the Esscher domain constraint
+$K(\theta+1)-K(\theta)=r-q$ creates a non-smooth boundary in parameter
+space, and the FFT pricer introduces small numerical ripples in the
+objective surface.
+
+\subsection{Expected results from the literature}
+
+For equity-index options (SPX), the established empirical hierarchy is
+(\citeA{carr2002fine}):
+\begin{enumerate}
+  \item Black--Scholes (flat vol) $\gg$ Heston (stochastic vol)
+  \item Heston $\approx$ Bates/SVJ (finite-activity jumps)
+  \item Heston/Bates $\ll$ NIG/VG/BGM (infinite-activity Lévy)
+\end{enumerate}
+The infinite-activity models improve on Heston precisely because their
+semi-heavy tails generate a steeper OTM-put skew than the CIR variance
+process can produce.  On SPX, the improvement is typically 10--30\% in
+IV-MAPE, with the largest gains concentrated in short-dated ($<30$ DTE)
+options.
+
+\subsection{Actual results on GLD (2025-07-18)}
+
+\begin{table}[htbp]
+  \centering
+  \caption{Full-sample IV-space calibration on 877 GLD option quotes,
+    11 maturities (8--127 DTE), mixed calls and puts.}
+  \label{tab:gen2_results}
+  \begin{tabular}{lcccc}
+    \toprule
+    \textbf{Model} & \textbf{IV-MAPE (\%)} & \textbf{Price-MAPE (\%)} &
+    \textbf{RMSE (\$)} & \textbf{vs Heston} \\
+    \midrule
+    Black--Scholes (flat vol)    & 8.32  & 8.32  & —    & $+43\%$ \\
+    Heston (stochastic vol)      & \textbf{5.83}  & \textbf{5.83}  & —    & — \\
+    NIG  (infinite-activity)     & 8.22  & 17.66 & 0.29 & $+41\%$ \\
+    VG   (infinite-activity)       & 8.37  & 13.58 & 0.36 & $+44\%$ \\
+    BGM  (infinite-activity)     & 8.35  & 18.96 & 0.29 & $+43\%$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Table~\ref{tab:gen2_results} reveals a striking departure from the SPX
+literature.  None of the three Lévy models improves on Heston.  In
+IV space they merely match flat-vol Black--Scholes; in price space they
+degrade significantly because deep OTM puts have market prices below
+\$0.50 and tiny absolute pricing errors become enormous relative errors.
+
+\subsection{Why Lévy underperforms on this dataset}
+
+We identify three complementary explanations:
+
+\textbf{(1) Boundary-seeking = Gaussian collapse.}
+Differential evolution pushes several parameters to their box edges:
+\begin{align*}
+  \text{NIG:}  && \alpha &= 24.69 \quad (\text{upper bound}=25.0), \\
+  \text{VG:}   && \nu    &= 0.01 \quad (\text{lower bound}=0.01), \\
+  \text{BGM:}  && \alpha_- &= 20.0 \quad (\text{upper bound}=20.0).
+\end{align*}
+These boundaries are not arbitrary numerical artifacts.  As
+$\alpha\to\infty$ the NIG distribution converges to Gaussian; as
+$\nu\to 0$ the Gamma clock becomes deterministic and VG becomes Brownian
+motion; as $\alpha_-\to\infty$ with fixed $\lambda_-$ the BGM negative
+jump component collapses to a deterministic drift.  The optimiser is
+literally telling us that the \emph{best} infinite-activity fit is the
+limiting diffusion --- which Heston already captures more parsimoniously.
+
+\textbf{(2) Narrow moneyness range.}
+GLD strikes span only $K/S \in [0.924, 1.064]$.  There are no deep OTM
+puts ($K/S < 0.85$) or deep OTM calls ($K/S > 1.15$) where the semi-heavy
+tails of NIG/VG/BGM would generate the characteristic steep skew that
+beats stochastic volatility.  Within the observed window, a CIR variance
+process plus correlated Brownian motion is sufficient.
+
+\textbf{(3) Metric pathology in price space.}
+The ``Price-MAPE'' column (13--19\%) is inflated by deep OTM puts with
+market prices below \$0.50.  The same \$0.05 pricing discrepancy is a 2\%
+error for an ATM call (price $\sim$\$2.50) but a 20\% error for a deep
+OTM put (price $\sim$\$0.25).  This is why the literature calibrates in
+IV space, where every strike receives equal weight.
+
+\subsection{The empirical bridge to Generation 3}
+
+The results of Table~\ref{tab:gen2_results} pose an uncomfortable question:
+if the classical parametric hierarchy (BS $\to$ Heston $\to$ Lévy) has
+reached its empirical ceiling on this dataset, where does one go next?
+
+The honest answer is \emph{non-parametric learning}.  Parametric models
+impose a rigid functional form --- flat vol, CIR variance, Inverse
+Gaussian subordination, Gamma difference --- and the data either conforms
+to that form or it does not.  GLD's narrow, gently skewed surface does not
+conform to any of the jump-driven forms, yet it is still too complex for
+flat-vol BS.  A model that can \emph{learn} the mapping
+$(K, T) \mapsto \sigma_{\text{impl}}$ directly from the data, without
+pre-committing to a specific stochastic-process family, is the natural
+next step.
+
+This motivates Generation 3: deep learning architectures that treat the
+volatility surface as a spatiotemporal signal and learn its evolution
+from historical panels.  The three architectures we consider --- ConvLSTM,
+Attention-LSTM, and Physics-informed Transformer --- each address a
+specific limitation of the parametric approach:
+\begin{itemize}
+  \item \textbf{ConvLSTM} captures the spatial structure of the surface
+    (strike dimension) and its temporal evolution (maturity dimension)
+    simultaneously.
+  \item \textbf{Attention-LSTM} learns cross-dependencies between strikes
+    and maturities without the locality bias of convolution.
+  \item \textbf{Physics-informed Transformer} hard-wires no-arbitrage
+    constraints (calendar-spread positivity, butterfly convexity) into the
+    architecture, ensuring the learned surface is economically meaningful.
+\end{itemize}
+
+Whether these architectures can beat Heston's 5.83\% IV-MAPE on GLD is
+an open empirical question --- but they are the only remaining direction
+once the parametric frontier has been exhausted.
+
+
+\end{document}

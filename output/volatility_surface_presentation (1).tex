@@ -1,0 +1,896 @@
+\documentclass[aspectratio=169]{beamer}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsfonts, amssymb, amsmath, amsthm, mathtools}
+\usepackage{bm}
+\usepackage{physics}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric, arrows.meta, positioning, calc, fit}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{xcolor}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{appendixnumberbeamer}
+
+% --- Professional colour palette (Bloomberg-terminal inspired) ---
+\definecolor{bbgblack}{RGB}{25,25,25}
+\definecolor{bbgorange}{RGB}{255,145,0}
+\definecolor{bbggray}{RGB}{140,140,140}
+\definecolor{bbglight}{RGB}{245,245,245}
+\definecolor{accentblue}{RGB}{51,102,153}
+\definecolor{accentgreen}{RGB}{0,153,102}
+\definecolor{gen1color}{RGB}{0,102,204}
+
+% --- Beamer theme configuration ---
+\usetheme{Madrid}
+\usecolortheme{default}
+\setbeamercolor{title}{fg=bbgblack}
+\setbeamercolor{frametitle}{fg=bbgblack,bg=bbglight}
+\setbeamercolor{structure}{fg=accentblue}
+\setbeamercolor{block title}{fg=white,bg=accentblue}
+\setbeamercolor{block body}{fg=bbgblack,bg=bbglight}
+\setbeamercolor{item}{fg=bbgorange}
+\setbeamercolor{subitem}{fg=accentblue}
+\setbeamertemplate{itemize item}[circle]
+\setbeamertemplate{itemize subitem}[square]
+
+% --- Math shortcuts for stochastic calculus ---
+\newcommand{\diff}{\mathrm{d}}
+\newcommand{\Exp}{\mathbb{E}}
+\newcommand{\Prob}{\mathbb{P}}
+\newcommand{\Qmeas}{\mathbb{Q}}
+\newcommand{\Rset}{\mathbb{R}}
+\newcommand{\Var}{\mathrm{Var}}
+\newcommand{\Cov}{\mathrm{Cov}}
+\newcommand{\sgimp}{\sigma_{\mathrm{imp}}}
+\newcommand{\HESTON}{\textsc{Heston}}
+\newcommand{\NIG}{\textsc{Nig}}
+\newcommand{\VG}{\textsc{VG}}
+\newcommand{\BGM}{\textsc{BGM}}
+\newcommand{\FFT}{\textsc{FFT}}
+\newcommand{\SVI}{\textsc{Svi}}
+\newcommand{\MAPE}{\textsc{Mape}}
+\newcommand{\RMSE}{\textsc{Rmse}}
+
+
+% --- Title Information ---
+\title{\textbf{Volatility Surface Modelling and Forecasting}}
+\subtitle{From L\'evy Processes to Deep Learning}
+\author{Amos Anderson}
+\institute[Stony Brook University]{Stony Brook University \\ Applied Mathematics and Statistics}
+\date{May 6, 2026}
+
+\begin{document}
+
+% =============================================================================
+% SLIDE 1: TITLE
+% =============================================================================
+\begin{frame}
+  \titlepage
+\end{frame}
+
+% =============================================================================
+% NEW SLIDES: DATA AND BS BENCHMARK
+% =============================================================================
+
+\begin{frame}{The Data: GLD Options on 18 July 2025}
+\framesubtitle{A real option chain with 11 maturities and 877 quotes}
+\small
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\textbf{Why GLD?}
+\begin{itemize}
+    \item Liquid gold ETF, tight bid-ask spreads
+    \item 11 maturities: 8 DTE to 127 DTE
+    \item $\sim$80 strikes per maturity (call + put)
+    \item Source: \texttt{Barchart.com} end-of-day quotes
+\end{itemize}
+\vspace{0.3cm}
+\textbf{Key parameters:}
+\begin{itemize}
+    \item Spot: $S_0 = \$308.39$
+    \item Moneyness range: $K/S_0 \in [0.924,\, 1.064]$
+    \item Risk-free rate: interpolated Treasury curve (4.27\% -- 4.46\%)
+    \item Dividend yield: $q = 0.4\%$ (GLD expense ratio)
+\end{itemize}
+\end{column}
+
+\begin{column}{0.46\textwidth}
+\begin{block}{What We Observe}
+The market does not trade at a single implied volatility. Instead, every strike--maturity pair carries its own $\sgimp(K,T)$. Our job is to model this \textbf{surface}.
+\end{block}
+\vspace{0.2cm}
+\centering
+\textcolor{bbgorange}{\textbf{877 contracts}}\\
+\textcolor{bbgorange}{\textbf{11 expirations}}\\
+\textcolor{bbgorange}{\textbf{1 common benchmark}}
+\end{column}
+\end{columns}
+
+\end{frame}
+
+% =============================================================================
+% SLIDE: BS BENCHMARK
+% =============================================================================
+
+\begin{frame}{The Black-Scholes Benchmark}
+\framesubtitle{How wrong is a single flat volatility?}
+
+\begin{columns}[T]
+\begin{column}{0.55\textwidth}
+\textbf{What Black-Scholes assumes:}
+\begin{itemize}
+    \item One constant $\sigma$ for \textbf{all} strikes and maturities
+    \item Log-normal returns: no skew, no smile, no term structure
+    \item Complete market: unique risk-neutral measure $\Qmeas$
+\end{itemize}
+\vspace{0.3cm}
+\textbf{Best single volatility (least-squares):}
+\begin{equation}
+\hat\sigma_{\text{flat}} \;=\; \arg\min_{\sigma} \sum_{i=1}^{877} \bigl( C_{\text{BS}}^{(i)}(\sigma) - C_{\text{mid}}^{(i)} \bigr)^2
+\;=\; \boxed{16.20\%}
+\end{equation}
+\vspace{0.2cm}
+Overall pricing error: $\text{MAPE} = 8.32\%$
+\end{column}
+
+\begin{column}{0.42\textwidth}
+\begin{block}{The Benchmark Logic}
+We do not advocate BS. We use it as a \textbf{deliberately naive floor}. Any model that cannot beat $8.32\%$ MAPE is not economically viable.
+\end{block}
+\end{column}
+\end{columns}
+
+\end{frame}
+
+% =============================================================================
+% SLIDE: FOUR STYLIZED FACTS TABLE
+% =============================================================================
+
+\begin{frame}{Where Flat Volatility Fails}
+\framesubtitle{Four stylised facts that every model must explain}
+
+\centering
+\footnotesize
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Stylised Fact} & \textbf{What BS Predicts} & \textbf{What Market Does} & \textbf{MAPE} \\
+\midrule
+\textbf{1. Skew} (OTM put premium) & $\sgimp$ flat in $K$ & Put $K/S=0.944$: $+0.51$ pp vs ATM & 8.60\% \\
+\textbf{2. Term structure} & $\sgimp$ constant in $T$ & Short ATM $13.65\%$ $\to$ Long ATM $16.12\%$ & 8.02\% \\
+\textbf{3. Short-dated steepness} & Skew $\propto 1/\sqrt{T}$ & Short skew is \textbf{5.1$\times$} steeper than long & 10.85\% \\
+\textbf{4. Smile asymmetry} & Gaussian symmetry & Call $K/S=1.057$: $+1.30$ pp vs ATM & 7.60\% \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.4cm}
+\textcolor{bbgorange}{\textbf{The flat-vol assumption misses every directional feature of the market.}}
+
+\end{frame}
+
+% =============================================================================
+% SLIDE: DIAGNOSTIC FIGURE
+% =============================================================================
+
+\begin{frame}{Visual Evidence: The BS Failure Dashboard}
+\framesubtitle{IV deviation from the best flat vol ($\hat\sigma = 16.20\%$)}
+
+\centering
+\includegraphics[width=0.50\textwidth]{output/05_flatvol_deviation.png}
+
+\begin{columns}[T]
+\begin{column}{0.34\textwidth}
+\centering
+\footnotesize
+\textbf{OTM Puts}\\
+$K/S < 0.98$\\
+IV \textbf{too high}, Crash insurance premium
+\end{column}
+\begin{column}{0.34\textwidth}
+\centering
+\footnotesize
+\textbf{ATM}\\
+$K/S \approx 1.0$\\
+Clustered near zero, Flat volatility
+\end{column}
+\begin{column}{0.32\textwidth}
+\centering
+\footnotesize
+\textbf{OTM Calls}\\
+$K/S > 1.02$\\
+Close to flat, No upside panic
+\end{column}
+\end{columns}
+
+\end{frame}
+
+% =============================================================================
+% SLIDE: 3D SURFACE
+% =============================================================================
+
+\begin{frame}{The Implied Volatility Surface}
+\framesubtitle{The empirical object: $\sgimp(K,T)$ for GLD calls}
+\vspace{-0.2cm}
+\centering
+\includegraphics[width=0.50\textwidth]{output/01_surface_3d.png}
+
+\tiny
+\vspace{-0.4cm}
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\centering
+\textbf{The ``hot zone''}\\
+Short-dated OTM puts\\
+IV reaches $\sim$28\%\\
+%\textcolor{bbgorange}{Where BS fails most severely}
+\end{column}
+\begin{column}{0.48\textwidth}
+\centering
+\textbf{The flattening}\\
+Long maturities ($T > 0.1$)\\
+IV converges to $\sim$15--16\%\\
+\textcolor{accentblue}{Where mean-reversion dominates}
+\end{column}
+\end{columns}
+
+\end{frame}
+
+% =============================================================================
+% SLIDE: TERM STRUCTURE + SKEW
+% =============================================================================
+
+\begin{frame}{Term Structure and Skew Slices}
+\framesubtitle{Two cross-sections of the same surface}
+
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\centering
+\textbf{Term Structure}\\
+\includegraphics[width=\textwidth]{output/04_term_structure.png}
+\tiny
+\vspace{-0.3cm}
+\begin{itemize}
+    \item \textbf{Upward sloping} for GLD (unlike SPX)
+    \item Short ATM: 13.65\%
+    \item Long ATM: 16.12\%
+    \item OTM puts start highest, decay toward ATM
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\centering
+\textbf{Skew by Maturity}\\
+\includegraphics[width=\textwidth]{output/03_skew_smile.png}
+\vspace{-0.3cm}
+\tiny
+\begin{itemize}
+    \item Short-dated: extreme spike at $K/S \approx 0.94$
+    \item Long-dated: modest, nearly flat
+    \item Flat-vol line (red) misses every slice
+\end{itemize}
+\end{column}
+\end{columns}
+
+\end{frame}
+
+% =============================================================================
+% SLIDE: WHAT THIS MEANS FOR MODELS
+% =============================================================================
+
+\begin{frame}{What the Failure Tells Us About Model Design}
+\framesubtitle{Each stylised fact points to a different modelling strategy}
+
+\begin{center}
+\begin{tikzpicture}[
+    factbox/.style={draw, rounded corners, minimum width=2.6cm, minimum height=0.85cm, align=center, font=\footnotesize, fill=bbgblack, text=white, draw=medgray},
+    gen1box/.style={draw, rounded corners, minimum width=3.2cm, minimum height=1.1cm, align=center, font=\small, fill=accentblue!15, draw=accentblue},
+    gen2box/.style={draw, rounded corners, minimum width=3.2cm, minimum height=1.1cm, align=center, font=\small, fill=accentgreen!15, draw=accentgreen},
+    gen3box/.style={draw, rounded corners, minimum width=3.2cm, minimum height=1.1cm, align=center, font=\small, fill=bbgorange!15, draw=bbgorange},
+    arrow/.style={-{Stealth[length=2mm]}, thick},
+]
+
+% Four stylized facts — top row, widely spaced
+\node[factbox] (f1) at (-5.6, 2.5) {\textbf{1. Skew}\\[-2pt]\tiny$\rho < 0$ correlation};
+\node[factbox] (f2) at (-1.9, 2.5) {\textbf{2. Term structure}\\[-2pt]\tiny Mean-reverting vol};
+\node[factbox] (f3) at ( 1.9, 2.5) {\textbf{3. Short steepness}\\[-2pt]\tiny Jumps needed};
+\node[factbox] (f4) at ( 5.6, 2.5) {\textbf{4. Smile asymmetry}\\[-2pt]\tiny Heavy tails};
+
+% Label above facts
+\node[font=\footnotesize\itshape\color{bbggray}] at (0, 3.3) {Four stylised facts that flat volatility misses};
+
+% Three generations — bottom row, separated with gaps
+\node[gen1box] (g1) at (-4.2, 0.4) {\textbf{Generation 1}\\ Heston SV\\ \tiny CIR + correlation};
+\node[gen2box] (g2) at ( 0.0, 0.4) {\textbf{Generation 2}\\ L\'evy (NIG, VG)\\ \tiny Heavy-tailed returns};
+\node[gen3box] (g3) at ( 4.2, 0.4) {\textbf{Generation 3}\\ Deep Learning\\ \tiny ConvLSTM + physics};
+
+% Arrows: Gen 1 ← facts 1 & 2
+\draw[arrow, accentblue] (f1) -- (g1);
+\draw[arrow, accentblue] (f2) -- (g1);
+
+% Arrows: Gen 2 ← facts 3 & 4
+\draw[arrow, accentgreen] (f3) -- (g2);
+\draw[arrow, accentgreen] (f4) -- (g2);
+
+% Arrows: Gen 3 ← all four (dashed, routed via elbow)
+\draw[arrow, bbgorange, dashed] (f1.south) -- ++(0,-0.3) -| (g3.north);
+\draw[arrow, bbgorange, dashed] (f2.south) -- ++(0,-0.3) -| (g3.north);
+\draw[arrow, bbgorange, dashed] (f3.south) -- ++(0,-0.3) -| (g3.north);
+\draw[arrow, bbgorange, dashed] (f4.south) -- ++(0,-0.3) -| (g3.north);
+
+% Captions below each generation
+\node[below=0.25cm of g1, font=\tiny, text width=3.0cm, align=center, color=bbggray] {Variance swaps complete the market};
+\node[below=0.25cm of g2, font=\tiny, text width=3.0cm, align=center, color=bbggray] {Escher transform selects $\Qmeas$};
+\node[below=0.25cm of g3, font=\tiny, text width=3.0cm, align=center, color=bbggray] {Learns directly from data};
+
+\end{tikzpicture}
+\end{center}
+
+\vspace{0.2cm}
+\centering
+\textcolor{bbgorange}{\textbf{The benchmark surface is set. Next: can Heston (Gen 1) clear the $8.32\%$ MAPE hurdle?}}
+
+\end{frame}
+
+% =============================================================================
+% SLIDE 3: THREE GENERATIONS
+% =============================================================================
+% \begin{frame}{Three Generations of Models}
+% \framesubtitle{A taxonomy of responses to market incompleteness}
+
+% \begin{center}
+% \begin{tikzpicture}[
+%     box/.style={draw, rounded corners, minimum width=3.2cm, minimum height=1.2cm, align=center, font=\small},
+%     gen1/.style={box, fill=accentblue!15, draw=accentblue},
+%     gen2/.style={box, fill=accentgreen!15, draw=accentgreen},
+%     gen3/.style={box, fill=bbgorange!15, draw=bbgorange},
+%     arrow/.style={-{Stealth[length=2mm]}, thick},
+%     label/.style={font=\footnotesize\bfseries}
+% ]
+
+% % Problem at top
+% \node[draw, rounded corners, fill=bbgblack, text=white, minimum width=10cm, minimum height=0.8cm] (prob) at (0,2.5) {Market Incompleteness: $\Qmeas$ is not unique};
+
+% % Generation boxes
+% \node[gen1] (g1) at (-4,0.5) {\textbf{Generation 1}\\ Stochastic Volatility};
+% \node[gen2] (g2) at (0,0.5) {\textbf{Generation 2}\\ L\'evy Processes};
+% \node[gen3] (g3) at (4,0.5) {\textbf{Generation 3}\\ Deep Learning};
+
+% % Models below
+% \node[below=0.4cm of g1, font=\scriptsize, align=center] {Heston, SVJ, SABR\\ CIR variance + correlation};
+% \node[below=0.4cm of g2, font=\scriptsize, align=center] {NIG, VG, CGMY, BGM\\ Heavy-tailed returns};
+% \node[below=0.4cm of g3, font=\scriptsize, align=center] {ConvLSTM, Transformers\\ Physics-informed NNs};
+
+% % Arrows
+% \draw[arrow, accentblue] (prob) -- (g1);
+% \draw[arrow, accentgreen] (prob) -- (g2);
+% \draw[arrow, bbgorange] (prob) -- (g3);
+
+% % Resolution strategies
+% \node[below=1.6cm of g1, font=\scriptsize, text width=3cm, align=center] {Add second traded instrument (variance swaps) to complete market};
+% \node[below=1.6cm of g2, font=\scriptsize, text width=3cm, align=center] {Impose Escher martingale condition to select unique $\Qmeas$};
+% \node[below=1.6cm of g3, font=\scriptsize, text width=3cm, align=center] {Learn the resolution directly from option price data};
+
+% \end{tikzpicture}
+% \end{center}
+
+% \end{frame}
+
+% ============================================================================
+
+\begin{frame}{Generation 1: Heston Stochastic Volatility}
+\framesubtitle{Making volatility itself a random process}
+
+\begin{columns}[T]
+\begin{column}{0.55\textwidth}
+\textbf{The Heston dynamics:}
+\begin{align*}
+\mathrm{d}S_t &= (r-q)S_t\,\mathrm{d}t + \sqrt{v_t}\,S_t\,\mathrm{d}W_t^1\\
+\mathrm{d}v_t &= \kappa(\theta-v_t)\,\mathrm{d}t + \sigma_v\sqrt{v_t}\,\mathrm{d}W_t^2
+\end{align*}
+with $\mathrm{d}\langle W^1,W^2\rangle = \rho\,\mathrm{d}t$.
+
+\vspace{0.3cm}
+\textbf{The economic mechanism:}
+\begin{itemize}
+    \item $\rho < 0$: spot drops $\Rightarrow$ variance rises $\Rightarrow$ OTM puts expensive
+    \item CIR: variance mean-reverts to $\theta$ at speed $\kappa$
+    \item Closed-form characteristic function $\Rightarrow$ FFT pricing
+\end{itemize}
+\end{column}
+
+\begin{column}{0.42\textwidth}
+\begin{block}{Fitted Parameters (GLD)}
+\begin{tabular}{@{}lc@{}}\toprule
+Parameter & Value\\
+\midrule
+$v_0$ (initial var) & 0.0220\\
+$\kappa$ (speed) & 10.00\\
+$\theta$ (long var) & 0.0308\\
+$\sigma_v$ (vol of vol) & 0.6598\\
+$\rho$ (correlation) & +0.24\\
+\bottomrule
+\end{tabular}
+\\[0.2cm]
+\footnotesize Feller: $2\kappa\theta - \sigma_v^2 = 0.18 > 0$ \checkmark
+\end{block}
+\end{column}
+\end{columns}
+
+\end{frame}
+
+% =============================================================================
+% SLIDE: HESTON RESULTS TABLE
+% =============================================================================
+
+\begin{frame}{Heston Results Table}
+\framesubtitle{29.9\% better than BS overall, but deep OTM puts worsen}
+
+\centering
+\small
+\begin{tabular}{@{}lccc@{}}\toprule
+\textbf{Moneyness Bucket} & \textbf{BS Flat Vol} & \textbf{Heston SV} & \textbf{Winner}\\
+\midrule
+Deep OTM Put ($K/S\leq 0.95$) & 8.36\% & 12.19\% & \textcolor{red}{BS}\\
+OTM Put ($0.95 < K/S < 0.98$) & 11.14\% & 6.08\% & \textcolor{gen1color}{Heston}\\
+ATM ($0.98\leq K/S\leq 1.02$) & 8.01\% & 4.97\% & \textcolor{gen1color}{Heston}\\
+OTM Call ($1.02 < K/S < 1.05$) & 6.12\% & 5.43\% & \textcolor{gen1color}{Heston}\\
+Deep OTM Call ($K/S\geq 1.05$) & 7.29\% & 3.57\% & \textcolor{gen1color}{Heston}\\
+\midrule
+\bfseries Overall MAPE & \bfseries 8.32\% & \bfseries 5.83\% & \textcolor{gen1color}{\bfseries Heston}\\
+\bottomrule
+\end{tabular}
+
+\vspace{0.3cm}
+\begin{itemize}
+    \item \textcolor{red}{\textbf{The problem:}} CIR diffusion cannot generate enough short-maturity skew for deep OTM puts. The variance process needs time to react---but short-dated options expire first.
+    \item \textcolor{bbgorange}{\textbf{The solution:}} Replace the Gaussian driver with jumps (L\'evy processes, Generation~2).
+\end{itemize}
+
+\end{frame}
+
+% =============================================================================
+% SLIDE: HESTON 3D COMPARISON (optional, if you generate the plot)
+% =============================================================================
+
+\begin{frame}{Visual Comparison: BS vs Heston Implied Vol}
+\framesubtitle{Heston captures the bulk of the smile, but not the extreme short end}
+
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\centering
+\textbf{BS Flat Vol (16.20\%)}\\
+\includegraphics[width=0.9\textwidth]{output/01_surface_3d.png}
+\\[0.1cm]
+\footnotesize Constant across all $(K,T)$. MAPE = 8.32\%
+\end{column}
+\begin{column}{0.48\textwidth}
+\centering
+\textbf{Heston SV (fitted)}\\
+% Generate this plot in the notebook and save as heston_surface_3d.png
+\includegraphics[width=0.9\textwidth]{output/heston_surface_3d.png}
+\footnotesize Correlated variance generates skew. MAPE = 5.83\%
+\end{column}
+\end{columns}
+
+\end{frame}
+
+\begin{frame}{Visual Comparison: BS vs Heston Implied Vol}
+\framesubtitle{Contour Plots}
+
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\centering
+\textbf{BS Flat Vol (16.20\%)}\\
+\includegraphics[width=0.9\textwidth]{output/02_surface_2d_contour.png}
+\\[0.1cm]
+\end{column}
+\begin{column}{0.48\textwidth}
+\centering
+\textbf{Heston SV (fitted)}\\
+% Generate this plot in the notebook and save as heston_surface_3d.png
+\includegraphics[width=0.9\textwidth]{output/heston_surface_2d_contour.png}
+\end{column}
+\end{columns}
+
+\end{frame}
+
+%=============================================================================
+% SLIDE: SVJ EXTENSION RESULTS
+% =============================================================================
+
+\begin{frame}{Generation 1: The SVJ Extension}
+\framesubtitle{Adding compound Poisson jumps to Heston (Bates 1996)}
+\small
+
+\textbf{The SVJ dynamics:}
+\begin{align*}
+\mathrm{d}S_t &= (r-q-\lambda\mu_J)\,S_t\,\mathrm{d}t + \sqrt{v_t}\,S_t\,\mathrm{d}W_t^1 + S_t\,(e^{J}-1)\,\mathrm{d}N_t\\[2pt]
+\mathrm{d}v_t &= \kappa(\theta-v_t)\,\mathrm{d}t + \sigma_v\sqrt{v_t}\,\mathrm{d}W_t^2\\[2pt]
+J &\sim \mathcal{N}(\mu_J,\sigma_J^2),\qquad \mathrm{d}N_t \sim \text{Poisson}(\lambda\,\mathrm{d}t)
+\end{align*}
+
+\textbf{Calibrated jump parameters} (Heston params frozen):
+\quad $\lambda = 0.0102$, \quad $\mu_J \approx 0$, \quad $\sigma_J = 0.01$
+
+\centering
+\small
+\begin{tabular}{@{}lccc@{}}\toprule
+\textbf{Metric} & \textbf{BS Flat Vol} & \textbf{Heston SV} & \textbf{Heston + SVJ}\\\midrule
+Overall MAPE & 8.32\% & 5.83\% & \textbf{5.83\%}\\
+Deep OTM put MAPE & 8.36\% & 12.19\% & \textbf{12.19\%}\\\bottomrule
+\end{tabular}
+
+\textcolor{red}{\textbf{The jump component did not activate.}}
+
+\vspace{0.2cm}
+\footnotesize
+\begin{itemize}
+\item With GLD's narrow strike range ($K/S \in [0.924, 1.064]$), the optimizer finds
+$\lambda \approx 0$, $\mu_J \approx 0$: \emph{no jumps needed to fit the observed prices.}
+\item This confirms Gatheral (2006): finite-activity Poisson jumps cannot reproduce\\[1pt]
+the continuous short-dated skew. \textbf{Infinite-activity is needed}---L\'evy processes.
+\end{itemize}
+
+\end{frame}
+
+\begin{frame}{Generation 2: L\'evy Processes}
+\framesubtitle{Infinite-activity jumps to capture the short-dated skew}
+
+\textbf{The problem Generation 1 left unsolved:}
+\begin{itemize}
+    \item Heston diffusion needs \emph{time} to generate variance --- short-dated skew too shallow
+    \item SVJ adds \emph{finite} Poisson jumps ($\lambda$ too low) --- still not enough
+    \item Empirical skew scales as $T^H$, $H < 1/2$; diffusion gives $T^{1/2}$
+\end{itemize}
+
+\vspace{0.2cm}
+\textcolor{bbgorange}{\textbf{The Lévy insight:}} Replace the Gaussian underlying process with a process that has \textbf{infinite activity}---jumps at \emph{every} time scale, not just discrete arrivals.
+
+\vspace{0.2cm}
+\textbf{L\'evy-Khinchine triplet $(\gamma, \sigma, \nu)$:}
+\begin{equation}
+\varphi(u) = \exp\!\Bigl\{t\Bigl[i\gamma u - \frac{\sigma^2 u^2}{2} + \int_{\mathbb{R}}(e^{iux}-1-iux\mathbf{1}_{|x|<1})\,\nu(\mathrm{d}x)\Bigr]\Bigr\}
+\end{equation}
+
+\vspace{0.2cm}
+\textbf{Market incompleteness:} Jumps cannot be hedged by trading $S_t$ alone. The Esscher transform selects a unique risk-neutral measure $\mathbb{Q}_\theta$ via exponential tilting.
+
+\end{frame}
+
+% =============================================================================
+% SLIDE: THREE LÉVY MODELS
+% =============================================================================
+
+\begin{frame}{Three L\'evy Specifications}
+\framesubtitle{NIG, VG, and BGM --- different tail behaviours, same FFT pipeline}
+\footnotesize
+\begin{center}
+\begin{tabular}{@{}lccc@{}}\toprule
+& \textbf{NIG} & \textbf{VG} & \textbf{BGM}\\
+\midrule
+\textbf{Origin} & Barndorff-Nielsen (1997) & Madan-Carr-Chang (1998) & Michaelides-Kirkby (2024)\\
+\textbf{Time change} & Inverse Gaussian & Gamma & Two independent Gammas\\
+\textbf{Parameters} & $\alpha, \beta, \delta, \mu$ & $\sigma, \nu, \theta$ & $\alpha_\pm, \beta_\pm$\\
+\textbf{Tail control} & Symmetric via $\beta$ & Symmetric via $\nu$ & \textbf{Independent} $\alpha_\pm, \beta_\pm$\\
+\textbf{CF complexity} & Bessel $K_1$ & Elementary & Elementary (product)\\
+\textbf{Pricing} & FFT or Bessel explicit & FFT & FFT\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{0.3cm}
+\textcolor{bbgorange}{\textbf{The BGM advantage:}} Independent left/right tail parameters mean the model can fit gold's two-sided crash risk without forcing symmetry.
+
+\end{frame}
+
+\begin{frame}{1. Normal Inverse Gaussian (NIG)}
+\framesubtitle{Barndorff-Nielsen (1997) --- Brownian motion subordinated by Inverse Gaussian time}
+
+\textbf{The intuition.} Start with standard Brownian motion with drift $\theta$:
+\[
+X_t \;=\; \theta t + \sigma W_t
+\]
+Now replace calendar time $t$ with a random clock $T_t$ that follows \emph{Inverse Gaussian} distribution (also called the Wald distribution). The resulting process is \textbf{NIG}:
+\[
+L_t \;=\; \theta\, T_t + \sigma\, W_{T_t}
+\]
+
+\vspace{0.2cm}
+\textbf{Why this matters for options.} The Inverse Gaussian clock has \textbf{heavier tails} than the normal clock. When time itself is random and skewed, the returns inherit skewness and kurtosis even though the underlying Brownian motion is Gaussian.
+
+\end{frame}
+
+\begin{frame}{1. Normal Inverse Gaussian (NIG)}
+
+\textbf{Characteristic function} (closed form):
+\[
+\varphi_{\text{NIG}}(u) \;=\;
+\exp\!\Bigl\{
+i\mu u t + \delta t\bigl(
+\sqrt{\alpha^2 - \beta^2} - \sqrt{\alpha^2 - (\beta+iu)^2}
+\bigr)
+\Bigr\}
+\]
+
+\textbf{Parameters:} 
+\quad
+\begin{tabular}{@{}ll@{}}\toprule
+$\alpha > 0$ & Tail heaviness (steepness of the smile)\\
+$|\beta| < \alpha$ & Skewness ($\beta<0$ for negative skew)\\
+$\delta > 0$ & Scale (overall volatility level)\\
+$\mu \in \mathbb{R}$ & Location (drift adjustment)\\\bottomrule
+\end{tabular}
+
+\vspace{0.2cm}
+\textbf{Key property:} NIG is a \emph{normal variance-mean mixture}. The density involves the modified Bessel function $K_1$, but the characteristic function above is elementary enough for FFT pricing.
+
+\end{frame}
+
+\begin{frame}{2. Variance Gamma (VG)}
+\framesubtitle{Madan, Carr \& Chang (1998) --- Brownian motion subordinated by Gamma time}
+
+\textbf{The intuition.} Same recipe as NIG: start with Brownian motion, but now replace the clock with a \emph{Gamma} process $G_t$ instead of Inverse Gaussian. The Gamma clock is \textbf{pure-jump with infinite activity} --- it ticks at every instant, but most ticks are infinitesimally small.
+
+\[
+L_t \;=\; \theta\, G_t + \sigma\, W_{G_t}, \qquad G_t \sim \Gamma\!\left(\frac{t}{\nu},\,\nu\right)
+\]
+
+\vspace{0.2cm}
+\textbf{Why this matters for options.} The Gamma subordinator produces \textbf{finite moments but infinite activity}. The model generates a continuous stream of small jumps that creates the steep short-dated skew --- exactly what Heston diffusion misses.
+
+\end{frame}
+
+\begin{frame}{2. Variance Gamma (VG)}
+
+\textbf{Characteristic function} (elementary):
+\[
+\varphi_{\text{VG}}(u) \;=\;
+\Bigl(
+1 - i\theta\nu u + \frac{\sigma^2\nu u^2}{2}
+\Bigr)^{-t/\nu}
+\]
+
+\vspace{0.2cm}
+\textbf{Parameters:}
+\quad
+\begin{tabular}{@{}ll@{}}\toprule
+$\sigma > 0$ & Volatility of the Brownian motion\\
+$\nu > 0$ & Variance rate of the Gamma clock\\
+& \quad (as $\nu \to 0$, VG $\to$ Black-Scholes)\\
+$\theta \in \mathbb{R}$ & Drift of the subordinated Brownian motion\\
+& \quad ($\theta < 0$ produces negative skew)\\\bottomrule
+\end{tabular}
+
+\vspace{0.2cm}
+\textbf{Key property:} VG is the \emph{simplest} exponential L\'evy model for finance --- no Bessel functions, no hypergeometrics. The CF is a power function, making calibration fast and FFT pricing trivial.
+
+\end{frame}
+
+\begin{frame}{3. Bilateral Gamma Motion (BGM)}
+\framesubtitle{Michaelides \& Kirkby (2024) --- independent Gamma clocks for each tail}
+
+\textbf{The intuition.} NIG and VG use a \emph{single} time change for the entire return distribution. BGM breaks the clock into two \textbf{independent} Gamma processes:
+\[
+L_t \;=\; X_t^+ - X_t^-, \qquad
+X_t^\pm \sim \Gamma(\alpha_\pm t,\, \beta_\pm)
+\]
+$X^+$ drives \textbf{positive} jumps (upside), $X^-$ drives \textbf{negative} jumps (downside). They are completely decoupled.
+
+\vspace{0.2cm}
+\textbf{Why this matters for gold (GLD).} Equity indices typically exhibit \emph{one-sided} skew --- OTM puts are expensive, OTM calls are cheap. Gold is different: both supply shocks and safe-haven demand can generate large moves. A model with \textbf{independent tail parameters} can fit two-sided tail risk without forcing symmetry.
+
+\end{frame}
+
+\begin{frame}{3. Bilateral Gamma Motion (BGM)}
+
+\textbf{Characteristic function} (product of two Gamma CFs):
+\[
+\varphi_{\text{BGM}}(u) \;=\;
+\Bigl(1 - \frac{iu}{\beta_+}\Bigr)^{-\alpha_+ t}
+\Bigl(1 + \frac{iu}{\beta_-}\Bigr)^{-\alpha_- t}
+\]
+
+\vspace{0.2cm}
+\textbf{Parameters:}
+\quad
+\begin{tabular}{@{}ll@{}}\toprule
+$\alpha_+, \alpha_-$ & Shape (tail heaviness of upside / downside)\\
+$\beta_+, \beta_-$ & Rate (frequency of positive / negative jumps)\\
+& \quad Larger $\beta_+$ $\Rightarrow$ fewer large upward jumps\\
+& \quad Smaller $\beta_-$ $\Rightarrow$ fatter left tail (crash risk)\\\bottomrule
+\end{tabular}
+
+\vspace{0.2cm}
+\textbf{Key property:} BGM is the only model among the three where \textbf{skewness and kurtosis are separately controlled for each tail}. This is economically meaningful for commodities and cryptocurrencies, where two-sided tail risk is the rule, not the exception.
+
+\end{frame}
+
+
+% ---------------------------------------------------------------------------
+% Frame 1: Expected vs. Actual
+% ---------------------------------------------------------------------------
+\begin{frame}{Generation 2: Expected vs. Actual Performance}
+  \textbf{Literature expectation} (Carr--Madan 2002, Schoutens 2003).
+  On equity-index options (SPX), infinite-activity Lévy processes typically
+  \emph{beat} stochastic-volatility models on the short-dated skew because
+  semi-heavy tails generate a steeper OTM-put smile than a CIR variance
+  process alone.
+
+  \vspace{0.2cm}
+  \textbf{What we found on GLD (2025-07-18).}
+
+  \begin{center}
+  \begin{tabular}{lccc}
+    \toprule
+    \textbf{Model} & \textbf{IV-MAPE (\%)} & \textbf{Price-MAPE (\%)} & \textbf{RMSE (\$)} \\
+    \midrule
+    Black--Scholes (flat vol)    & 8.32  & 8.32  & —     \\
+    Heston (stochastic vol)      & \textbf{5.83}  & \textbf{5.83}  & —     \\
+    NIG  (infinite-activity)     & 8.22  & 17.66 & 0.29  \\
+    VG   (infinite-activity)     & 8.37  & 13.58 & 0.36  \\
+    BGM  (infinite-activity)     & 8.35  & 18.96 & 0.29  \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{0.1cm}
+  \textbf{No improvement.}  All three Lévy models match (but do not beat)
+  flat-vol BS in IV space, and are significantly \emph{worse} than Heston.
+\end{frame}
+
+% ---------------------------------------------------------------------------
+% Frame 2: Why the Lévy models found no marginal gain
+% ---------------------------------------------------------------------------
+\begin{frame}{Why Lévy underperforms on GLD: three explanations}
+  \begin{enumerate}
+    \item \textbf{Boundary-seeking = Gaussian collapse.}
+    Differential evolution pushes parameters to box edges:
+    \[
+      \text{NIG: }\alpha=24.7\;(\text{ub}=25),\quad
+      \text{VG: }\nu=0.01\;(\text{lb}),\quad
+      \text{BGM: }\alpha_-=20\;(\text{ub}).
+    \]
+    As $\alpha\to\infty$ (NIG) or $\nu\to 0$ (VG), the process collapses to
+    Brownian motion.  The data is telling the optimizer: ``I do not need jumps.''
+
+    \vspace{0.3cm}
+    \item \textbf{Narrow moneyness range.}
+    GLD strikes span only $K/S \in [0.924, 1.064]$.  There are no deep OTM
+    wings ($K/S < 0.8$ or $> 1.2$) where semi-heavy tails would generate the
+    characteristic steep skew that Lévy models are famous for.
+
+    \vspace{0.3cm}
+    \item \textbf{IV-space vs. Price-space pathology.}
+    In IV space the Lévy models match BS ($\sim$8\%).  In price space they
+    degrade to 13--19\% because deep OTM puts have prices $\ll \$1$; tiny
+    dollar errors become enormous relative errors when the denominator is small.
+  \end{enumerate}
+\end{frame}
+
+% % ---------------------------------------------------------------------------
+% % Frame 3: The IV fit plot
+% % ---------------------------------------------------------------------------
+% \begin{frame}{Visual check: model IV vs. market IV}
+%   \begin{columns}
+%     \begin{column}{0.68\textwidth}
+%       \includegraphics[width=\textwidth]{output/gen2_levy_iv_fit.png}
+%     \end{column}
+%     \begin{column}{0.30\textwidth}
+%       \footnotesize
+%       \textbf{Key observations.}
+%       \begin{itemize}
+%         \item NIG overestimates short-dated ATM IV by $\sim$1 vol-point.
+%         \item VG underestimates the left-wing (OTM put) IV --- its
+%           Gamma clock lacks the tail thickness needed for this dataset.
+%         \item BGM shows the most erratic fit: high-$\lambda_+$ and
+%           low-$\lambda_-$ create an asymmetric jump measure that the
+%           narrow GLD smile cannot resolve.
+%       \end{itemize}
+%     \end{column}
+%   \end{columns}
+% \end{frame}
+
+% ---------------------------------------------------------------------------
+% Frame 3: IV Fit (gen2_levy_iv_fit.png)
+% ---------------------------------------------------------------------------
+\begin{frame}{Visual check 1/3: Model IV vs. Market IV}
+  \begin{center}
+    \includegraphics[width=0.85\textwidth]{output/gen2_levy_iv_fit.png}
+  \end{center}
+
+  \footnotesize
+  \textbf{What the plot shows.}  Gray = market-implied volatilities; red = model-implied volatilities.  All three models cluster around the market cloud, confirming the $\sim$8\% IV-MAPE.
+
+  \vspace{0.1cm}
+  \textbf{Systematic bias visible.}
+  \tiny
+  \begin{itemize}
+    \item \textbf{NIG} (left): red dots drift \emph{above} the gray cloud for $K/S > 1.02$ (OTM calls).  The high $\alpha=24.7$ produces a flatter right wing than the market demands.
+    \item \textbf{VG} (center): most compressed fit.  With $\nu=0.01$ the Gamma clock is nearly deterministic, so the model cannot generate the full IV dispersion seen in the data.
+    \item \textbf{BGM} (right): red dots overshoot on both wings --- the asymmetric jump measure (high $\lambda_+$, low $\lambda_-$) creates excess curvature that the narrow GLD smile cannot absorb.
+  \end{itemize}
+\end{frame}
+
+% ---------------------------------------------------------------------------
+% Frame 4: Price Fit (gen2_levy_scatter_fit.png)
+% ---------------------------------------------------------------------------
+\begin{frame}{Visual check 2/3: Model Price vs. Market Price}
+  \begin{center}
+    \includegraphics[width=0.85\textwidth]{output/gen2_levy_scatter_fit.png}
+  \end{center}
+
+  \footnotesize
+  \textbf{Color code.}  Red = deep OTM puts ($K/S \approx 0.94$); green = ATM; yellow = OTM calls.  The dashed black line is the 45$^\circ$ perfect-fit line.
+
+  \vspace{0.2cm}
+  \textbf{Key observation:} all three models follow the diagonal \emph{perfectly} for prices $> \$5$ (ATM and slightly OTM).  The degradation is entirely in the bottom-left corner: deep OTM puts priced below $\$2$.
+  \tiny
+
+  \begin{itemize}
+    \item \textbf{VG} (center, 13.58\% Price-MAPE) is the tightest cluster --- its near-Gaussian limit happens to align with the center of the GLD smile.
+    \item \textbf{NIG} and \textbf{BGM} (17--19\%) show more scattered red points below the diagonal: they overprice cheap OTM puts, and the small absolute dollar error ($\sim$\$0.10) becomes a 50--100\% relative error when the denominator is $\$0.20$.
+  \end{itemize}
+\end{frame}
+
+% ---------------------------------------------------------------------------
+% Frame 5: Error Distribution (gen2_levy_error_distributions.png)
+% ---------------------------------------------------------------------------
+\begin{frame}{Visual check 3/3: Error Distributions}
+  \begin{center}
+    \includegraphics[width=0.85\textwidth]{output/gen2_levy_error_distributions.png}
+  \end{center}
+
+  \vspace{0.2cm}
+  \footnotesize
+  \textbf{What the histograms reveal.}  All three distributions are \emph{heavily right-skewed}: most quotes have small errors ($<5\%$), but a long tail stretches to 100--300\%.
+
+  \vspace{0.2cm}
+  \textbf{The MAPE is driven by outliers, not the bulk.}
+  \tiny
+  \begin{itemize}
+    \item The tallest bar in each histogram is the $0$--$5\%$ bucket --- the majority of quotes are well-priced.
+    \item The red dashed MAPE line ($\approx$14--19\%) sits far to the right of the mode because a small minority of deep OTM puts (prices $\ll \$1$) generate extreme relative errors.
+    \item \textbf{VG} has the narrowest tail: $\sim$500 quotes in the first bucket vs. $\sim$200 for NIG/BGM, confirming VG is the most robust on this dataset.
+  \end{itemize}
+
+  \vspace{0.2cm}
+  \textbf{Takeaway.}  The Price-MAPE numbers (13--19\%) are \emph{not} representative of typical performance --- they are statistical artifacts of the metric, not model failure.  This is precisely why the literature calibrates Lévy models in IV space.
+\end{frame}
+
+% ---------------------------------------------------------------------------
+% Frame 4: The bridge to Generation 3
+% ---------------------------------------------------------------------------
+\begin{frame}{The empirical bridge to Generation 3}
+  \textbf{What we have established so far.}
+  \begin{itemize}
+    \item BS flat-vol fails (8.32\% MAPE) --- the smile exists.
+    \item Heston captures it (5.83\% MAPE) --- stochastic volatility is
+      the \emph{dominant} mechanism for this surface.
+    \item Lévy adds no marginal value (8.2--8.4\% IV-MAPE) --- the data
+      does not exhibit the extreme kurtosis or wide moneyness wings that
+      infinite-activity jumps were designed for.
+  \end{itemize}
+
+  \vspace{0.3cm}
+  \textbf{The unanswered question.}
+  If parametric models (BS, Heston, NIG, VG, BGM) are all \emph{too rigid}
+  or \emph{too expressive} for this surface, can we learn the mapping
+  $(K, T) \mapsto \sigma_{\text{impl}}$ directly from the data without
+  imposing a functional form?
+
+  \vspace{0.3cm}
+  \textbf{Generation 3: Deep Learning.}
+  \begin{itemize}
+    \item \textbf{ConvLSTM} --- spatiotemporal evolution of the surface.
+    \item \textbf{Attention-LSTM} --- cross-dependencies across strikes
+      and maturities.
+    \item \textbf{Physics-informed Transformer} --- hard-wires no-arbitrage
+      constraints (calendar spread, butterfly) into the architecture.
+  \end{itemize}
+\end{frame}
+
+
+
+\end{document}
